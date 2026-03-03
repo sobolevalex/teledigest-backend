@@ -1,0 +1,1 @@
+"""TeleDigest FastAPI application."""

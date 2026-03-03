@@ -5,7 +5,7 @@ import logging
 import edge_tts
 import google.generativeai as genai
 
-from telegram_reader.config import DEFAULT_RADIO_VOICE, RADIO_SYSTEM_INSTRUCTION
+from app.services.telegram_reader.config import DEFAULT_RADIO_VOICE, RADIO_SYSTEM_INSTRUCTION
 
 logger = logging.getLogger(__name__)
 

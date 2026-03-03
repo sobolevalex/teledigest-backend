@@ -9,10 +9,10 @@ from pathlib import Path
 from dotenv import load_dotenv
 from telethon import TelegramClient
 
-from telegram_reader.config import EnvVars, load_config, load_env
-from telegram_reader.email_sender import EmailSender
-from telegram_reader.fetcher import TelegramDigestFetcher
-from telegram_reader.radio import RadioEpisodeCreator
+from app.services.telegram_reader.config import EnvVars, load_config, load_env
+from app.services.telegram_reader.email_sender import EmailSender
+from app.services.telegram_reader.fetcher import TelegramDigestFetcher
+from app.services.telegram_reader.radio import RadioEpisodeCreator
 
 logger = logging.getLogger(__name__)
 

@@ -6,8 +6,8 @@ from datetime import datetime, timezone
 from telethon import TelegramClient
 from telethon.tl.functions.messages import GetPeerDialogsRequest
 
-from telegram_reader.config import AppConfig
-from telegram_reader.text_utils import filter_links, replace_question_marks_to_retorical_questions
+from app.services.telegram_reader.config import AppConfig
+from app.services.telegram_reader.text_utils import filter_links, replace_question_marks_to_retorical_questions
 
 logger = logging.getLogger(__name__)
 
