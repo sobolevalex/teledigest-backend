@@ -1,0 +1,4 @@
+telethon
+python-dotenv
+google-generativeai
+edge-tts
