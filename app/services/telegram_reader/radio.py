@@ -1,5 +1,6 @@
 """Radio episode: Gemini script + edge_tts MP3."""
 
+import asyncio
 import logging
 
 import edge_tts
@@ -56,22 +57,34 @@ class RadioEpisodeCreator:
 
         self._log.info("Starting synthesis of %d fragments...", len(chunks))
 
+        max_retries = 3
         with open(output_path, "wb") as final_audio:
-            print("Number of chunks: ", len(chunks))
+            self._log.info("Number of chunks: %d", len(chunks))
             for i, chunk in enumerate(chunks):
-                try:
-                    communicate = edge_tts.Communicate(chunk, self.voice)
-                    async for chunk_data in communicate.stream():
-                        if chunk_data["type"] == "audio":
-                            final_audio.write(chunk_data["data"])
-                    self._log.info("Fragment %d/%d done", i + 1, len(chunks))
-                except Exception as err:
-                    self._log.warning(
-                        "Error on fragment %d/%d: %s",
-                        i + 1,
-                        len(chunks),
-                        err,
-                    )
+                for attempt in range(max_retries):
+                    try:
+                        communicate = edge_tts.Communicate(chunk, self.voice)
+                        async for chunk_data in communicate.stream():
+                            if chunk_data["type"] == "audio":
+                                final_audio.write(chunk_data["data"])
+                        self._log.info("Fragment %d/%d done", i + 1, len(chunks))
+                        break
+                    except Exception as err:
+                        err_str = str(err)
+                        is_transient = "503" in err_str or "502" in err_str or "429" in err_str or "temporarily" in err_str.lower()
+                        if is_transient and attempt < max_retries - 1:
+                            wait_sec = 2 * (attempt + 1)
+                            self._log.warning(
+                                "Fragment %d/%d attempt %d failed (transient): %s; retrying in %ds",
+                                i + 1, len(chunks), attempt + 1, err, wait_sec,
+                            )
+                            await asyncio.sleep(wait_sec)
+                        else:
+                            self._log.warning(
+                                "Error on fragment %d/%d: %s",
+                                i + 1, len(chunks), err,
+                            )
+                            break
 
     async def create_episode(
         self,

@@ -1,6 +1,7 @@
 """Telegram digest fetcher: collect today's messages from configured channels."""
 
 import logging
+from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from telethon import TelegramClient
@@ -13,6 +14,17 @@ logger = logging.getLogger(__name__)
 
 # Max messages to request per channel before applying limit filter
 ITER_MESSAGES_LIMIT: int = 50
+
+
+@dataclass
+class FetchResult:
+    """Structured result of a digest fetch: data-only content and metadata (no prompt stored)."""
+
+    content_data_only: str
+    prompt_prefix: str
+    first_message_at: datetime | None
+    last_message_at: datetime | None
+    channel_names: list[str]
 
 
 class TelegramDigestFetcher:
@@ -29,11 +41,11 @@ class TelegramDigestFetcher:
         self._channel_configs = channel_configs
         self._log = logger
 
-    async def fetch(self) -> str | None:
+    async def fetch(self) -> FetchResult | None:
         """
         Iterate over channel_configs, collect today's messages (optionally only unread),
-        build blocks with filter_links, then prepend system prompt and return full content.
-        Returns None if no messages were collected.
+        build blocks with filter_links, then prepend system prompt and return full content
+        plus first/last message times and channel names. Returns None if no messages.
         """
         self._log.info("Starting message collection...")
         local_midnight = datetime.now().astimezone().replace(
@@ -41,6 +53,9 @@ class TelegramDigestFetcher:
         )
         today = local_midnight.astimezone(timezone.utc)
         full_body: list[str] = []
+        channel_names: list[str] = []
+        first_message_at: datetime | None = None
+        last_message_at: datetime | None = None
 
         for ch_cfg in self._channel_configs:
             target = ch_cfg.username
@@ -72,9 +87,9 @@ class TelegramDigestFetcher:
                     except Exception:
                         pass
 
-                msgs: list[str] = []
+                # (message_date, line_text) for this channel to compute first/last times
+                msgs: list[tuple[datetime, str]] = []
                 max_read_id: int | None = None
-                # Per-channel limit; None means take all up to ITER_MESSAGES_LIMIT
                 limit_for_channel = ch_cfg.message_limit
                 async for message in self._client.iter_messages(
                     entity, limit=ITER_MESSAGES_LIMIT
@@ -92,18 +107,28 @@ class TelegramDigestFetcher:
                         message.sender, "first_name"
                     ):
                         sender_name = f"{message.sender.first_name}: "
-                    msgs.append(f"[{time_str}] {sender_name}{message.text}")
+                    line = f"[{time_str}] {sender_name}{message.text}"
+                    msgs.append((message.date, line))
 
                     if limit_for_channel is not None and len(msgs) >= limit_for_channel:
                         break
 
                 if msgs:
                     msgs.reverse()
+                    dates = [d for d, _ in msgs]
+                    ch_first = min(dates)
+                    ch_last = max(dates)
+                    if first_message_at is None or ch_first < first_message_at:
+                        first_message_at = ch_first
+                    if last_message_at is None or ch_last > last_message_at:
+                        last_message_at = ch_last
+                    channel_names.append(title)
+
                     header = f"=== Начало канала: {title} ==="
                     if unread_count is not None:
                         header += f" (непрочитанных в диалоге: {unread_count})"
                     header += "\n"
-                    block = header + "\n\n".join(msgs)
+                    block = header + "\n\n".join(line for _, line in msgs)
                     block = filter_links(block)
                     block = replace_question_marks_to_retorical_questions(block)
                     full_body.append(block)
@@ -135,11 +160,17 @@ class TelegramDigestFetcher:
 
         date_str = datetime.now().strftime("%d.%m.%Y")
         time_str = datetime.now().strftime("%H:%M")
-        system_prompt = (
+        prompt_prefix = (
             f"\n\n--- ИНСТРУКЦИЯ ДЛЯ AI (GEMINI) ---\n"
             f"{self._config.ai_instructions}\n\n"
             f"-----------------------------------\n\n"
             f"--- НАЧАЛО ДАННЫХ ({date_str} - {time_str}) ---\n"
         )
-        final_content = system_prompt + "\n\n".join(full_body)
-        return final_content
+        data_only = "\n\n".join(full_body)
+        return FetchResult(
+            content_data_only=data_only,
+            prompt_prefix=prompt_prefix,
+            first_message_at=first_message_at,
+            last_message_at=last_message_at,
+            channel_names=channel_names,
+        )

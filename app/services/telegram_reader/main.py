@@ -9,7 +9,12 @@ from pathlib import Path
 from dotenv import load_dotenv
 from telethon import TelegramClient
 
-from app.services.telegram_reader.config import EnvVars, load_config, load_env
+from app.services.telegram_reader.config import (
+    ChannelConfig,
+    EnvVars,
+    load_config,
+    load_env,
+)
 from app.services.telegram_reader.email_sender import EmailSender
 from app.services.telegram_reader.fetcher import TelegramDigestFetcher
 from app.services.telegram_reader.radio import RadioEpisodeCreator
@@ -49,16 +54,25 @@ async def run(config_path: str | Path = "config.json") -> None:
     _check_env_for_run(env, config.output_mode)
 
     session_name = "anon"
+    channel_configs = [
+        ChannelConfig(
+            username=c,
+            message_limit=config.message_limit_per_channel,
+            only_unread=config.only_unread,
+        )
+        for c in config.channels
+    ]
     async with TelegramClient(
         session_name, int(env.api_id), env.api_hash
     ) as client:
-        fetcher = TelegramDigestFetcher(client, config)
-        content = await fetcher.fetch()
+        fetcher = TelegramDigestFetcher(client, config, channel_configs)
+        result = await fetcher.fetch()
 
-    if content is None:
+    if result is None:
         logger.info("No new messages today. Exiting.")
         return
 
+    content = result.prompt_prefix + result.content_data_only
     date_str = datetime.now().strftime("%d.%m.%Y")
     time_str = datetime.now().strftime("%H:%M")
     subject = f"{config.email_subject_prefix} [{date_str} {time_str}]"

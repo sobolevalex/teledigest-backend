@@ -3,7 +3,9 @@ Background generation task: fetch Telegram digest and create MP3 for one track.
 Adapted from the old run() in telegram_reader/main.py (fetch -> create_episode).
 """
 
+import json
 import logging
+from datetime import datetime, timezone
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -12,7 +14,7 @@ from telethon import TelegramClient
 from app.core.database import SessionLocal
 from app.models import Channel, Track
 from app.services.telegram_reader.config import ChannelConfig, load_config, load_env
-from app.services.telegram_reader.fetcher import TelegramDigestFetcher
+from app.services.telegram_reader.fetcher import FetchResult, TelegramDigestFetcher
 from app.services.telegram_reader.radio import RadioEpisodeCreator
 
 logger = logging.getLogger(__name__)
@@ -94,9 +96,9 @@ async def run_generation_for_track(
             env.api_hash,
         ) as client:
             fetcher = TelegramDigestFetcher(client, config, channel_configs)
-            content = await fetcher.fetch()
+            result = await fetcher.fetch()
 
-        if content is None:
+        if result is None:
             track.status = "new"
             track.file_url = None
             db.commit()
@@ -105,14 +107,36 @@ async def run_generation_for_track(
 
         creator = RadioEpisodeCreator(gemini_api_key=env.gemini_key)
         try:
-            await creator.create_episode(content, output_path=output_path)
+            content_for_gemini = result.prompt_prefix + result.content_data_only
+            await creator.create_episode(content_for_gemini, output_path=output_path)
         except Exception as err:
             logger.exception("Radio episode failed for track %s: %s", track_id, err)
-            # Leave status='progress', file_url=None so frontend can retry or show error
             return
 
+        # Timestamp when digest was finished; use for filename and DB
+        digest_created_at = datetime.now(timezone.utc)
+        final_name = f"digest_{digest_created_at.strftime('%Y-%m-%d_%H-%M')}_{track_id}.mp3"
+        final_mp3_path = media_dir / final_name
+        initial_mp3_path = Path(output_path)
+        if initial_mp3_path.resolve() != final_mp3_path.resolve():
+            initial_mp3_path.rename(final_mp3_path)
+
+        # Transcript: raw message data only (before AI prompt was added), same basename as MP3
+        transcript_path = final_mp3_path.with_suffix(".txt")
+        transcript_path.write_text(result.content_data_only, encoding="utf-8")
+
+        # Normalize datetimes to UTC for storage (SQLite has no timezone)
+        def _utc(dt: datetime | None) -> datetime | None:
+            if dt is None:
+                return None
+            return dt.astimezone(timezone.utc).replace(tzinfo=None) if getattr(dt, "tzinfo", None) else dt
+
         track.status = "new"
-        track.file_url = f"/media/{track_id}.mp3"
+        track.file_url = f"/media/{final_name}"
+        track.messages_start_at = _utc(result.first_message_at)
+        track.messages_end_at = _utc(result.last_message_at)
+        track.digest_created_at = digest_created_at.replace(tzinfo=None)
+        track.channels_used = json.dumps(result.channel_names) if result.channel_names else None
         db.commit()
         logger.info("Track %s ready: %s", track_id, track.file_url)
     finally:

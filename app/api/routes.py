@@ -1,6 +1,7 @@
 """API routes: tracks, channels CRUD, generate (with background task), and Telegram channel list."""
 
 import asyncio
+import json
 
 from dotenv import load_dotenv
 from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException
@@ -54,22 +55,38 @@ def _run_generation_sync(
     asyncio.run(run_generation_for_track(track_id, config_path, channel_id))
 
 
+def _track_to_item(t):
+    """Build track dict for API response; includes digest metadata and transcript_url."""
+    channels_used = None
+    if t.channels_used:
+        try:
+            channels_used = json.loads(t.channels_used)
+        except (json.JSONDecodeError, TypeError):
+            channels_used = []
+    transcript_url = None
+    if t.file_url and t.file_url.endswith(".mp3"):
+        transcript_url = t.file_url[:-4] + ".txt"
+    return {
+        "id": t.id,
+        "title": t.title,
+        "channel_name": t.channel_name,
+        "channel_id": t.channel_id,
+        "status": t.status,
+        "file_url": t.file_url,
+        "created_at": t.created_at.isoformat() if t.created_at else None,
+        "messages_start_at": t.messages_start_at.isoformat() if t.messages_start_at else None,
+        "messages_end_at": t.messages_end_at.isoformat() if t.messages_end_at else None,
+        "digest_created_at": t.digest_created_at.isoformat() if t.digest_created_at else None,
+        "channels_used": channels_used,
+        "transcript_url": transcript_url,
+    }
+
+
 @router.get("/tracks")
 def list_tracks(db: Session = Depends(get_db)):
     """Return all tracks, newest first."""
     tracks = db.query(Track).order_by(Track.created_at.desc()).all()
-    return [
-        {
-            "id": t.id,
-            "title": t.title,
-            "channel_name": t.channel_name,
-            "channel_id": t.channel_id,
-            "status": t.status,
-            "file_url": t.file_url,
-            "created_at": t.created_at.isoformat() if t.created_at else None,
-        }
-        for t in tracks
-    ]
+    return [_track_to_item(t) for t in tracks]
 
 
 # --- Channels CRUD ---

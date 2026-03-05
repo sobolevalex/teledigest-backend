@@ -40,7 +40,27 @@ def _migrate_tracks_add_channel_id() -> None:
             conn.commit()
 
 
+def _migrate_tracks_add_digest_metadata() -> None:
+    """Add digest metadata columns if missing (messages range, creation time, channels list)."""
+    new_columns = [
+        ("messages_start_at", "DATETIME"),
+        ("messages_end_at", "DATETIME"),
+        ("digest_created_at", "DATETIME"),
+        ("channels_used", "TEXT"),
+    ]
+    with engine.connect() as conn:
+        for col_name, col_type in new_columns:
+            result = conn.execute(
+                text("SELECT 1 FROM pragma_table_info('tracks') WHERE name=:name"),
+                {"name": col_name},
+            )
+            if result.scalar() is None:
+                conn.execute(text(f"ALTER TABLE tracks ADD COLUMN {col_name} {col_type}"))
+                conn.commit()
+
+
 _migrate_tracks_add_channel_id()
+_migrate_tracks_add_digest_metadata()
 
 app = FastAPI(title="TeleDigest")
 
