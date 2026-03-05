@@ -13,3 +13,4 @@ __pycache__/
 # Сгенерированные медиа
 media/
 
+teledigest.db
