@@ -62,11 +62,20 @@ RADIO_SYSTEM_INSTRUCTION: str = """
 
 
 @dataclass
-class AppConfig:
-    """Configuration loaded from config.json."""
+class ChannelConfig:
+    """Per-channel options for fetching (from DB or in-memory)."""
 
-    channels: list[str]
-    message_limit_per_channel: int
+    username: str
+    message_limit: int | None  # None = no cap, or "all unread" when only_unread=True
+    only_unread: bool
+
+
+@dataclass
+class AppConfig:
+    """Configuration loaded from config.json (non-channel options)."""
+
+    channels: list[str]  # Legacy: ignored when channels are loaded from DB
+    message_limit_per_channel: int  # Default for new channels / fallback
     email_subject_prefix: str
     show_unread_count: bool
     mark_as_read_after_fetch: bool
@@ -109,6 +118,7 @@ def load_config(path: str | Path) -> AppConfig:
     raw_instructions = data.get("ai_instructions", [])
     ai_instructions = _normalize_ai_instructions(raw_instructions)
 
+    # channels in JSON are legacy; channel list is loaded from DB at generation time
     return AppConfig(
         channels=data.get("channels", []),
         message_limit_per_channel=int(data.get("message_limit_per_channel", 10)),

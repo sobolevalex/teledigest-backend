@@ -10,8 +10,8 @@ from dotenv import load_dotenv
 from telethon import TelegramClient
 
 from app.core.database import SessionLocal
-from app.models import Track
-from app.services.telegram_reader.config import load_config, load_env
+from app.models import Channel, Track
+from app.services.telegram_reader.config import ChannelConfig, load_config, load_env
 from app.services.telegram_reader.fetcher import TelegramDigestFetcher
 from app.services.telegram_reader.radio import RadioEpisodeCreator
 
@@ -24,10 +24,11 @@ SESSION_NAME = "anon"
 async def run_generation_for_track(
     track_id: int,
     config_path: str = "config.json",
+    channel_id: int | None = None,
 ) -> None:
     """
-    Load env/config, fetch digest via TelegramDigestFetcher, generate MP3 via
-    RadioEpisodeCreator, then update the track (status='new', file_url).
+    Load env/config, load channels from DB (all or single by channel_id), fetch digest
+    via TelegramDigestFetcher, generate MP3 via RadioEpisodeCreator, then update the track.
     On no content or error, update track accordingly and return.
     """
     load_dotenv()
@@ -55,12 +56,44 @@ async def run_generation_for_track(
             logger.warning("Track id=%s not found; skipping generation", track_id)
             return
 
+        # Load channels from DB: single channel or all (ordered by sort_order, id)
+        if channel_id is not None:
+            channel = db.query(Channel).filter(Channel.id == channel_id).first()
+            channels = [channel] if channel else []
+        else:
+            channels = (
+                db.query(Channel)
+                .order_by(Channel.sort_order, Channel.id)
+                .all()
+            )
+        channel_configs = [
+            ChannelConfig(
+                username=c.username,
+                message_limit=c.message_limit,
+                only_unread=c.only_unread,
+            )
+            for c in channels
+        ]
+        if not channel_configs:
+            logger.warning("No channels to fetch for track %s", track_id)
+            track.status = "new"
+            track.file_url = None
+            db.commit()
+            return
+
+        # Optionally set track display for single-channel run
+        if len(channels) == 1:
+            track.channel_id = channels[0].id
+            track.channel_name = channels[0].display_name or channels[0].username
+        else:
+            track.channel_name = "TeleDigest"
+
         async with TelegramClient(
             SESSION_NAME,
             int(env.api_id),
             env.api_hash,
         ) as client:
-            fetcher = TelegramDigestFetcher(client, config)
+            fetcher = TelegramDigestFetcher(client, config, channel_configs)
             content = await fetcher.fetch()
 
         if content is None:
