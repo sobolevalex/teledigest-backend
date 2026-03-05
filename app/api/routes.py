@@ -1,7 +1,8 @@
-"""API routes: tracks, channels CRUD, and generate (with background task)."""
+"""API routes: tracks, channels CRUD, generate (with background task), and Telegram channel list."""
 
 import asyncio
 
+from dotenv import load_dotenv
 from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -9,6 +10,8 @@ from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.models import Channel, Track
 from app.services.generate_task import run_generation_for_track
+from app.services.telegram_reader.config import load_env
+from app.services.telegram_reader.channel_list import list_telegram_channels
 
 router = APIRouter(prefix="/api")
 
@@ -172,6 +175,34 @@ def delete_channel(channel_id: int, db: Session = Depends(get_db)):
     db.delete(channel)
     db.commit()
     return {"ok": True}
+
+
+# --- Telegram: list channels from account ---
+
+
+@router.get("/telegram/channels")
+async def list_telegram_channels_api():
+    """
+    Return all channels (and megagroups) the Telegram account has access to.
+    Requires TG_API_ID and TG_API_HASH in .env and a valid anon.session.
+    """
+    load_dotenv()
+    env = load_env()
+    if not env.api_id or not env.api_hash:
+        raise HTTPException(
+            status_code=503,
+            detail="Telegram not configured: set TG_API_ID and TG_API_HASH in .env",
+        )
+    try:
+        channels = await list_telegram_channels(
+            int(env.api_id), env.api_hash, session_name="anon"
+        )
+        return {"channels": channels}
+    except Exception as err:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Telegram error: {err!s}",
+        )
 
 
 # --- Generate ---
