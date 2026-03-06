@@ -3,11 +3,16 @@
 import json
 import os
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 # Default voice for TTS (radio mode)
 DEFAULT_RADIO_VOICE: str = "ru-RU-DmitryNeural"
+
+# Per-channel message selection modes
+MODE_LAST_N: str = "last_n"
+MODE_SINCE_LAST_DIGEST: str = "since_last_digest"
 
 # System instruction for Gemini in radio mode
 RADIO_SYSTEM_INSTRUCTION: str = """
@@ -68,6 +73,9 @@ class ChannelConfig:
     username: str
     message_limit: int | None  # None = no cap, or "all unread" when only_unread=True
     only_unread: bool
+    message_selection_mode: str = MODE_LAST_N  # last_n | since_last_digest
+    last_digest_message_id: int | None = None  # Bookmark for since_last_digest mode
+    last_digest_message_at: datetime | None = None  # UTC; used for 24h cutoff when bookmark is stale
 
 
 @dataclass

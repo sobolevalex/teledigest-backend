@@ -2,12 +2,17 @@
 
 import logging
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from telethon import TelegramClient
 from telethon.tl.functions.messages import GetPeerDialogsRequest
 
-from app.services.telegram_reader.config import AppConfig, ChannelConfig
+from app.services.telegram_reader.config import (
+    AppConfig,
+    ChannelConfig,
+    MODE_LAST_N,
+    MODE_SINCE_LAST_DIGEST,
+)
 from app.services.telegram_reader.text_utils import filter_links, replace_question_marks_to_retorical_questions
 
 logger = logging.getLogger(__name__)
@@ -25,6 +30,10 @@ class FetchResult:
     first_message_at: datetime | None
     last_message_at: datetime | None
     channel_names: list[str]
+    # Per-channel max message id included (for updating last_digest_message_id bookmark)
+    channel_last_message_ids: dict[str, int]
+    # Per-channel datetime of last message (for updating last_digest_message_at)
+    channel_last_message_dates: dict[str, datetime]
 
 
 class TelegramDigestFetcher:
@@ -43,17 +52,16 @@ class TelegramDigestFetcher:
 
     async def fetch(self) -> FetchResult | None:
         """
-        Iterate over channel_configs, collect today's messages (optionally only unread),
-        build blocks with filter_links, then prepend system prompt and return full content
-        plus first/last message times and channel names. Returns None if no messages.
+        Iterate over channel_configs, collect messages per selection mode (last_n or
+        since_last_digest), build blocks with filter_links, then prepend system prompt
+        and return full content plus first/last message times and channel names.
+        Returns None if no messages.
         """
         self._log.info("Starting message collection...")
-        local_midnight = datetime.now().astimezone().replace(
-            hour=0, minute=0, second=0, microsecond=0
-        )
-        today = local_midnight.astimezone(timezone.utc)
         full_body: list[str] = []
         channel_names: list[str] = []
+        channel_last_message_ids: dict[str, int] = {}
+        channel_last_message_dates: dict[str, datetime] = {}
         first_message_at: datetime | None = None
         last_message_at: datetime | None = None
 
@@ -87,14 +95,35 @@ class TelegramDigestFetcher:
                     except Exception:
                         pass
 
-                # (message_date, line_text) for this channel to compute first/last times
-                msgs: list[tuple[datetime, str]] = []
+                limit_for_channel = ch_cfg.message_limit or ITER_MESSAGES_LIMIT
+                mode = getattr(ch_cfg, "message_selection_mode", None) or MODE_LAST_N
+                min_id: int | None = None
+                use_today_start = False  # when True: fetch from today 00:00:01 UTC (offset_date + reverse)
+                if mode == MODE_SINCE_LAST_DIGEST:
+                    last_at = getattr(ch_cfg, "last_digest_message_at", None)
+                    if last_at is not None:
+                        now_utc = datetime.now(timezone.utc)
+                        # DB stores UTC as naive; ensure we have timezone for comparison
+                        last_at_utc = last_at.astimezone(timezone.utc) if getattr(last_at, "tzinfo", None) else last_at.replace(tzinfo=timezone.utc)
+                        if (now_utc - last_at_utc) > timedelta(hours=24):
+                            use_today_start = True
+                    if not use_today_start and getattr(ch_cfg, "last_digest_message_id", None):
+                        min_id = ch_cfg.last_digest_message_id
+
+                # (message_date, line_text, message_id) for first/last times and bookmark
+                msgs: list[tuple[datetime, str, int]] = []
                 max_read_id: int | None = None
-                limit_for_channel = ch_cfg.message_limit
-                async for message in self._client.iter_messages(
-                    entity, limit=ITER_MESSAGES_LIMIT
-                ):
-                    if not (message.date > today and message.text):
+
+                kwargs: dict = {"limit": limit_for_channel}
+                if use_today_start:
+                    today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=1, microsecond=0)
+                    kwargs["offset_date"] = today_start
+                    kwargs["reverse"] = True
+                elif min_id is not None:
+                    kwargs["min_id"] = min_id
+
+                async for message in self._client.iter_messages(entity, **kwargs):
+                    if not message.text:
                         continue
                     if only_unread and message.id <= read_inbox_max_id:
                         continue
@@ -108,14 +137,16 @@ class TelegramDigestFetcher:
                     ):
                         sender_name = f"{message.sender.first_name}: "
                     line = f"[{time_str}] {sender_name}{message.text}"
-                    msgs.append((message.date, line))
+                    msgs.append((message.date, line, message.id))
 
-                    if limit_for_channel is not None and len(msgs) >= limit_for_channel:
+                    if len(msgs) >= limit_for_channel:
                         break
 
                 if msgs:
-                    msgs.reverse()
-                    dates = [d for d, _ in msgs]
+                    # With min_id we get newest-first; with offset_date+reverse we get oldest-first
+                    if not use_today_start:
+                        msgs.reverse()
+                    dates = [d for d, _, _ in msgs]
                     ch_first = min(dates)
                     ch_last = max(dates)
                     if first_message_at is None or ch_first < first_message_at:
@@ -123,12 +154,14 @@ class TelegramDigestFetcher:
                     if last_message_at is None or ch_last > last_message_at:
                         last_message_at = ch_last
                     channel_names.append(title)
+                    channel_last_message_ids[ch_cfg.username] = max(mid for _, _, mid in msgs)
+                    channel_last_message_dates[ch_cfg.username] = ch_last
 
                     header = f"=== Начало канала: {title} ==="
                     if unread_count is not None:
                         header += f" (непрочитанных в диалоге: {unread_count})"
                     header += "\n"
-                    block = header + "\n\n".join(line for _, line in msgs)
+                    block = header + "\n\n".join(line for _, line, _ in msgs)
                     block = filter_links(block)
                     block = replace_question_marks_to_retorical_questions(block)
                     full_body.append(block)
@@ -155,7 +188,7 @@ class TelegramDigestFetcher:
                 self._log.exception("Error with %s: %s", target, err)
 
         if not full_body:
-            self._log.info("No new messages for today.")
+            self._log.info("No new messages collected.")
             return None
 
         date_str = datetime.now().strftime("%d.%m.%Y")
@@ -173,4 +206,6 @@ class TelegramDigestFetcher:
             first_message_at=first_message_at,
             last_message_at=last_message_at,
             channel_names=channel_names,
+            channel_last_message_ids=channel_last_message_ids,
+            channel_last_message_dates=channel_last_message_dates,
         )

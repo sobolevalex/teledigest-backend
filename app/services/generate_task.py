@@ -13,7 +13,12 @@ from telethon import TelegramClient
 
 from app.core.database import SessionLocal
 from app.models import Channel, Track
-from app.services.telegram_reader.config import ChannelConfig, load_config, load_env
+from app.services.telegram_reader.config import (
+    ChannelConfig,
+    MODE_LAST_N,
+    load_config,
+    load_env,
+)
 from app.services.telegram_reader.fetcher import FetchResult, TelegramDigestFetcher
 from app.services.telegram_reader.radio import RadioEpisodeCreator
 
@@ -73,6 +78,9 @@ async def run_generation_for_track(
                 username=c.username,
                 message_limit=c.message_limit,
                 only_unread=c.only_unread,
+                message_selection_mode=getattr(c, "message_selection_mode", None) or MODE_LAST_N,
+                last_digest_message_id=getattr(c, "last_digest_message_id", None),
+                last_digest_message_at=getattr(c, "last_digest_message_at", None),
             )
             for c in channels
         ]
@@ -137,6 +145,17 @@ async def run_generation_for_track(
         track.messages_end_at = _utc(result.last_message_at)
         track.digest_created_at = digest_created_at.replace(tzinfo=None)
         track.channels_used = json.dumps(result.channel_names) if result.channel_names else None
+
+        # Update per-channel bookmark for since_last_digest mode (id + date for 24h cutoff)
+        channels_by_username = {c.username: c for c in channels}
+        for username, max_msg_id in result.channel_last_message_ids.items():
+            ch = channels_by_username.get(username)
+            if ch is not None:
+                ch.last_digest_message_id = max_msg_id
+                last_at = result.channel_last_message_dates.get(username)
+                if last_at is not None:
+                    ch.last_digest_message_at = _utc(last_at)
+
         db.commit()
         logger.info("Track %s ready: %s", track_id, track.file_url)
     finally:

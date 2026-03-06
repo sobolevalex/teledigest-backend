@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.models import Channel, Track
 from app.services.generate_task import run_generation_for_track
-from app.services.telegram_reader.config import load_env
+from app.services.telegram_reader.config import MODE_LAST_N, load_env
 from app.services.telegram_reader.channel_list import list_telegram_channels
 
 router = APIRouter(prefix="/api")
@@ -28,6 +28,7 @@ class ChannelCreate(BaseModel):
     message_limit: int | None = None
     only_unread: bool = False
     sort_order: int = 0
+    message_selection_mode: str | None = None  # "last_n" | "since_last_digest"; default last_n
 
 
 class ChannelUpdate(BaseModel):
@@ -38,6 +39,7 @@ class ChannelUpdate(BaseModel):
     message_limit: int | None = None
     only_unread: bool | None = None
     sort_order: int | None = None
+    message_selection_mode: str | None = None
 
 
 class GenerateBody(BaseModel):
@@ -106,6 +108,7 @@ def list_channels(db: Session = Depends(get_db)):
             "message_limit": c.message_limit,
             "only_unread": c.only_unread,
             "sort_order": c.sort_order,
+            "message_selection_mode": getattr(c, "message_selection_mode", None) or MODE_LAST_N,
         }
         for c in channels
     ]
@@ -129,6 +132,7 @@ def create_channel(body: ChannelCreate, db: Session = Depends(get_db)):
         message_limit=body.message_limit,
         only_unread=body.only_unread,
         sort_order=body.sort_order,
+        message_selection_mode=body.message_selection_mode or MODE_LAST_N,
     )
     db.add(channel)
     db.commit()
@@ -140,6 +144,7 @@ def create_channel(body: ChannelCreate, db: Session = Depends(get_db)):
         "message_limit": channel.message_limit,
         "only_unread": channel.only_unread,
         "sort_order": channel.sort_order,
+        "message_selection_mode": channel.message_selection_mode,
     }
 
 
@@ -171,6 +176,8 @@ def update_channel(
         channel.only_unread = body.only_unread
     if body.sort_order is not None:
         channel.sort_order = body.sort_order
+    if body.message_selection_mode is not None:
+        channel.message_selection_mode = body.message_selection_mode
     db.commit()
     db.refresh(channel)
     return {
@@ -180,6 +187,7 @@ def update_channel(
         "message_limit": channel.message_limit,
         "only_unread": channel.only_unread,
         "sort_order": channel.sort_order,
+        "message_selection_mode": channel.message_selection_mode,
     }
 
 

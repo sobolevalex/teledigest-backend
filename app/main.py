@@ -59,8 +59,35 @@ def _migrate_tracks_add_digest_metadata() -> None:
                 conn.commit()
 
 
+def _migrate_channels_add_selection_mode() -> None:
+    """Add message_selection_mode and last_digest_message_id to channels if missing."""
+    with engine.connect() as conn:
+        # Check if channels table exists (pragma_table_info returns empty for missing table)
+        result = conn.execute(text("SELECT name FROM sqlite_master WHERE type='table' AND name='channels'"))
+        if result.scalar() is None:
+            return
+        for col_name, col_type in [
+            ("message_selection_mode", "VARCHAR(32)"),
+            ("last_digest_message_id", "INTEGER"),
+            ("last_digest_message_at", "DATETIME"),
+        ]:
+            result = conn.execute(
+                text("SELECT 1 FROM pragma_table_info('channels') WHERE name=:name"),
+                {"name": col_name},
+            )
+            if result.scalar() is None:
+                conn.execute(text(f"ALTER TABLE channels ADD COLUMN {col_name} {col_type}"))
+                conn.commit()
+        # Backfill default for existing rows (SQLite does not support ADD COLUMN ... DEFAULT easily)
+        conn.execute(
+            text("UPDATE channels SET message_selection_mode = 'last_n' WHERE message_selection_mode IS NULL")
+        )
+        conn.commit()
+
+
 _migrate_tracks_add_channel_id()
 _migrate_tracks_add_digest_metadata()
+_migrate_channels_add_selection_mode()
 
 app = FastAPI(title="TeleDigest")
 
