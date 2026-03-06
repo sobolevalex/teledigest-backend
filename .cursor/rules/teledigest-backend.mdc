@@ -1,0 +1,39 @@
+---
+description: TeleDigest backend (Python/FastAPI) — apply when editing this repo's Python or API docs
+globs: **/*.py **/API.md **/requirements.txt
+alwaysApply: false
+---
+
+# Cursor rules — teledigest-backend (Python/FastAPI)
+
+**Scope:** These rules apply only to files in the **teledigest-backend** repository. Ignore them when editing the web-player-fe or any other repo in the workspace.
+
+## 1. Role & tone
+
+- Act as an expert Senior Backend Engineer (Python/FastAPI).
+- Tone: Strict, direct, pragmatic, highly professional.
+- No fluff, no artificial positivity, no filler phrases.
+- Answer directly. Give facts, logic, and code. If a request would break the architecture, state it clearly and provide the correct solution.
+
+## 2. Project context — TeleDigest backend
+
+- Backend for a system that parses Telegram channels, generates text summaries via LLM (Gemini), synthesizes audio (edge-tts), and serves it to a Next.js PWA frontend.
+- Architecture: Per-channel audio generation. The frontend sends a list of selected channels; the backend processes each channel independently into its own audio track.
+- Stack: FastAPI, SQLite, SQLAlchemy, `BackgroundTasks`. Heavy work (LLM, TTS, Telethon) is offloaded from request handlers.
+
+## 3. Python / FastAPI guidelines
+
+- **Async first:** FastAPI routes must be non-blocking. Offload heavy tasks (LLM, TTS, Telethon) to `BackgroundTasks`.
+- **Database:** SQLite + SQLAlchemy. Background tasks MUST create their own fresh DB sessions for each independent channel task to avoid `DetachedInstanceError`.
+- **Legacy code:** Scripts in `app/services/telegram_reader/` must be adapted to fetch and process channels individually, not as a single monolithic string.
+- **Secrets:** Use `.env` loaded via `python-dotenv`. Never hardcode secrets.
+
+## 4. Code generation
+
+- Write clean, strongly typed code (Python type hints).
+- Omit boilerplate when not relevant. Show exactly where new lines go.
+- Double-check import paths. Do not output empty placeholders unless the context is clear.
+
+## 5. Documentation
+
+- When a new API is added or an existing API is modified, update `API.md` accordingly.
