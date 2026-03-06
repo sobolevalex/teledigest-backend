@@ -1,11 +1,14 @@
 """API routes: tracks, channels CRUD, generate (with background task), and Telegram channel list."""
 
 import asyncio
+import base64
 import json
+from datetime import datetime
 
 from dotenv import load_dotenv
-from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException, Query
 from pydantic import BaseModel
+from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
@@ -84,11 +87,65 @@ def _track_to_item(t):
     }
 
 
+def _decode_cursor(cursor_str: str) -> tuple[datetime, int] | None:
+    """Decode opaque cursor to (created_at, id). Returns None if invalid."""
+    try:
+        raw = base64.urlsafe_b64decode(cursor_str.encode("utf-8"))
+        data = json.loads(raw.decode("utf-8"))
+        created_at = datetime.fromisoformat(data["created_at"].replace("Z", "+00:00"))
+        return (created_at, int(data["id"]))
+    except (ValueError, KeyError, TypeError):
+        return None
+
+
+def _encode_cursor(created_at: datetime, track_id: int) -> str:
+    """Encode (created_at, id) into an opaque cursor string."""
+    payload = {"created_at": created_at.isoformat(), "id": track_id}
+    return base64.urlsafe_b64encode(json.dumps(payload).encode("utf-8")).decode("utf-8")
+
+
 @router.get("/tracks")
-def list_tracks(db: Session = Depends(get_db)):
-    """Return all tracks, newest first."""
-    tracks = db.query(Track).order_by(Track.created_at.desc()).all()
-    return [_track_to_item(t) for t in tracks]
+def list_tracks(
+    db: Session = Depends(get_db),
+    limit: int = Query(20, ge=1, le=100, description="Page size"),
+    cursor: str | None = Query(None, description="Opaque cursor for next page"),
+):
+    """
+    Return tracks newest first, with cursor-based pagination.
+    Use next_cursor from the response as the cursor query param for the next page.
+    """
+    query = db.query(Track).order_by(Track.created_at.desc(), Track.id.desc())
+
+    if cursor:
+        decoded = _decode_cursor(cursor)
+        if decoded:
+            cursor_created_at, cursor_id = decoded
+            # Rows strictly before cursor: (created_at < cursor) or (same created_at and id < cursor_id)
+            query = query.filter(
+                or_(
+                    Track.created_at < cursor_created_at,
+                    and_(
+                        Track.created_at == cursor_created_at,
+                        Track.id < cursor_id,
+                    ),
+                )
+            )
+        # Invalid cursor is ignored; first page is returned
+
+    tracks = query.limit(limit + 1).all()
+    has_more = len(tracks) > limit
+    if has_more:
+        tracks = tracks[:limit]
+    next_cursor = None
+    if has_more and tracks:
+        last = tracks[-1]
+        next_cursor = _encode_cursor(last.created_at, last.id)
+
+    return {
+        "items": [_track_to_item(t) for t in tracks],
+        "next_cursor": next_cursor,
+        "has_more": has_more,
+    }
 
 
 # --- Channels CRUD ---

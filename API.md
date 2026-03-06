@@ -10,11 +10,24 @@ All API routes are prefixed with `/api`.
 
 ### GET /api/tracks
 
-Returns all digest tracks, newest first.
+Returns digest tracks, newest first, with cursor-based pagination.
 
-**Parameters:** None (no query or path parameters).
+**Query parameters:**
 
-**Response:** JSON array of track objects. Each object includes:
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `limit` | integer | No | 20 | Page size (1–100). |
+| `cursor` | string | No | — | Opaque cursor from the previous response’s `next_cursor` for the next page. |
+
+**Response:** JSON object:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `items` | array | List of track objects (see below). |
+| `next_cursor` | string \| null | Cursor to request the next page; `null` if there are no more pages. |
+| `has_more` | boolean | Whether more results exist after this page. |
+
+Each element of `items` is a track object:
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -31,10 +44,17 @@ Returns all digest tracks, newest first.
 | `channels_used` | array \| null | List of channel identifiers used for this digest. |
 | `transcript_url` | string \| null | URL path to the transcript text file (e.g. `/media/digest_xxx.txt`). |
 
-**Example:**
+**Examples:**
 
 ```bash
+# First page (default limit 20)
 curl -X GET "http://localhost:8000/api/tracks"
+
+# Larger page
+curl -X GET "http://localhost:8000/api/tracks?limit=50"
+
+# Next page (use next_cursor from previous response)
+curl -X GET "http://localhost:8000/api/tracks?limit=20&cursor=eyJjcmVhdGVkX2F0IjoiMjAyNi0wMy0wNi4uLiIsImlkIjoxMH0"
 ```
 
 ---
