@@ -29,7 +29,6 @@ def main() -> None:
         print("No 'channels' in config.json; skipping seed")
         return
     message_limit = int(data.get("message_limit_per_channel", 10))
-    only_unread = bool(data.get("only_unread", False))
 
     db = SessionLocal()
     try:
@@ -42,7 +41,6 @@ def main() -> None:
                 username=username.strip(),
                 display_name=None,
                 message_limit=message_limit,
-                only_unread=only_unread,
                 sort_order=idx,
             )
             db.add(ch)

@@ -57,7 +57,8 @@ class TelegramDigestFetcher:
         and return full content plus first/last message times and channel names.
         Returns None if no messages.
         """
-        self._log.info("Starting message collection...")
+        usernames = [c.username for c in self._channel_configs]
+        self._log.info("Starting message collection for channels: %s", usernames)
         full_body: list[str] = []
         channel_names: list[str] = []
         channel_last_message_ids: dict[str, int] = {}
@@ -73,9 +74,7 @@ class TelegramDigestFetcher:
                 self._log.info("Scanning: %s...", title)
 
                 unread_count: int | None = None
-                read_inbox_max_id: int = 0
-                only_unread = ch_cfg.only_unread
-                if self._config.show_unread_count or only_unread:
+                if self._config.show_unread_count:
                     try:
                         peer = await self._client.get_input_entity(entity)
                         result = await self._client(
@@ -83,15 +82,9 @@ class TelegramDigestFetcher:
                         )
                         if result.dialogs:
                             dialog = result.dialogs[0]
-                            if self._config.show_unread_count:
-                                unread_count = (
-                                    getattr(dialog, "unread_count", 0) or 0
-                                )
-                            if only_unread:
-                                read_inbox_max_id = (
-                                    getattr(dialog, "read_inbox_max_id", 0)
-                                    or 0
-                                )
+                            unread_count = (
+                                getattr(dialog, "unread_count", 0) or 0
+                            )
                     except Exception:
                         pass
 
@@ -101,14 +94,25 @@ class TelegramDigestFetcher:
                 use_today_start = False  # when True: fetch from today 00:00:01 UTC (offset_date + reverse)
                 if mode == MODE_SINCE_LAST_DIGEST:
                     last_at = getattr(ch_cfg, "last_digest_message_at", None)
+                    last_id = getattr(ch_cfg, "last_digest_message_id", None)
                     if last_at is not None:
                         now_utc = datetime.now(timezone.utc)
                         # DB stores UTC as naive; ensure we have timezone for comparison
                         last_at_utc = last_at.astimezone(timezone.utc) if getattr(last_at, "tzinfo", None) else last_at.replace(tzinfo=timezone.utc)
                         if (now_utc - last_at_utc) > timedelta(hours=24):
                             use_today_start = True
-                    if not use_today_start and getattr(ch_cfg, "last_digest_message_id", None):
-                        min_id = ch_cfg.last_digest_message_id
+                            self._log.info(
+                                "Channel %s: since_last_digest bookmark older than 24h (last_at=%s); using today start",
+                                target,
+                                last_at,
+                            )
+                    if not use_today_start and last_id is not None:
+                        min_id = last_id
+                        self._log.info(
+                            "Channel %s: since_last_digest with min_id=%s (last_digest_message_id)",
+                            target,
+                            min_id,
+                        )
 
                 # (message_date, line_text, message_id) for first/last times and bookmark
                 msgs: list[tuple[datetime, str, int]] = []
@@ -124,8 +128,6 @@ class TelegramDigestFetcher:
 
                 async for message in self._client.iter_messages(entity, **kwargs):
                     if not message.text:
-                        continue
-                    if only_unread and message.id <= read_inbox_max_id:
                         continue
                     if max_read_id is None:
                         max_read_id = message.id
@@ -156,6 +158,15 @@ class TelegramDigestFetcher:
                     channel_names.append(title)
                     channel_last_message_ids[ch_cfg.username] = max(mid for _, _, mid in msgs)
                     channel_last_message_dates[ch_cfg.username] = ch_last
+                    self._log.info(
+                        "Channel %s (%s): collected %d messages (mode=%s, min_id=%s, use_today_start=%s)",
+                        target,
+                        title,
+                        len(msgs),
+                        mode,
+                        min_id,
+                        use_today_start,
+                    )
 
                     header = f"=== Начало канала: {title} ==="
                     if unread_count is not None:
@@ -166,29 +177,40 @@ class TelegramDigestFetcher:
                     block = replace_question_marks_to_retorical_questions(block)
                     full_body.append(block)
 
-                if (
-                    self._config.mark_as_read_after_fetch
-                    and max_read_id is not None
-                ):
-                    try:
-                        await self._client.send_read_acknowledge(
-                            entity, max_id=max_read_id
-                        )
-                        self._log.info(
-                            "Marked read up to id=%s", max_read_id
-                        )
-                    except Exception as err:
-                        self._log.warning(
-                            "Could not mark as read: %s", err
-                        )
-
+                    if (
+                        self._config.mark_as_read_after_fetch
+                        and max_read_id is not None
+                    ):
+                        try:
+                            await self._client.send_read_acknowledge(
+                                entity, max_id=max_read_id
+                            )
+                            self._log.info(
+                                "Marked read up to id=%s", max_read_id
+                            )
+                        except Exception as err:
+                            self._log.warning(
+                                "Could not mark as read: %s", err
+                            )
+                else:
+                    self._log.warning(
+                        "Channel %s (%s): 0 messages collected (mode=%s, min_id=%s, use_today_start=%s)",
+                        target,
+                        title,
+                        mode,
+                        min_id,
+                        use_today_start,
+                    )
             except ValueError:
                 self._log.warning("Channel not found: %s", target)
             except Exception as err:
                 self._log.exception("Error with %s: %s", target, err)
 
         if not full_body:
-            self._log.info("No new messages collected.")
+            self._log.warning(
+                "Returning None: no messages collected from any channel (channels tried: %s)",
+                usernames,
+            )
             return None
 
         date_str = datetime.now().strftime("%d.%m.%Y")

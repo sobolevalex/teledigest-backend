@@ -71,8 +71,7 @@ class ChannelConfig:
     """Per-channel options for fetching (from DB or in-memory)."""
 
     username: str
-    message_limit: int | None  # None = no cap, or "all unread" when only_unread=True
-    only_unread: bool
+    message_limit: int | None  # None = use app default cap
     message_selection_mode: str = MODE_LAST_N  # last_n | since_last_digest
     last_digest_message_id: int | None = None  # Bookmark for since_last_digest mode
     last_digest_message_at: datetime | None = None  # UTC; used for 24h cutoff when bookmark is stale

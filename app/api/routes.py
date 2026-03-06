@@ -29,7 +29,6 @@ class ChannelCreate(BaseModel):
     username: str
     display_name: str | None = None
     message_limit: int | None = None
-    only_unread: bool = False
     sort_order: int = 0
     message_selection_mode: str | None = None  # "last_n" | "since_last_digest"; default last_n
 
@@ -40,7 +39,6 @@ class ChannelUpdate(BaseModel):
     username: str | None = None
     display_name: str | None = None
     message_limit: int | None = None
-    only_unread: bool | None = None
     sort_order: int | None = None
     message_selection_mode: str | None = None
 
@@ -151,24 +149,34 @@ def list_tracks(
 # --- Channels CRUD ---
 
 
+def _channel_to_item(c) -> dict:
+    """Build channel dict for API response."""
+    return {
+        "id": c.id,
+        "username": c.username,
+        "display_name": c.display_name,
+        "message_limit": c.message_limit,
+        "sort_order": c.sort_order,
+        "message_selection_mode": getattr(c, "message_selection_mode", None) or MODE_LAST_N,
+    }
+
+
 @router.get("/channels")
 def list_channels(db: Session = Depends(get_db)):
     """Return all channels from DB, ordered by sort_order then id."""
     channels = (
         db.query(Channel).order_by(Channel.sort_order, Channel.id).all()
     )
-    return [
-        {
-            "id": c.id,
-            "username": c.username,
-            "display_name": c.display_name,
-            "message_limit": c.message_limit,
-            "only_unread": c.only_unread,
-            "sort_order": c.sort_order,
-            "message_selection_mode": getattr(c, "message_selection_mode", None) or MODE_LAST_N,
-        }
-        for c in channels
-    ]
+    return [_channel_to_item(c) for c in channels]
+
+
+@router.get("/channels/{channel_id}")
+def get_channel(channel_id: int, db: Session = Depends(get_db)):
+    """Return a single channel by ID. Returns 404 if not found."""
+    channel = db.query(Channel).filter(Channel.id == channel_id).first()
+    if not channel:
+        raise HTTPException(status_code=404, detail="Channel not found")
+    return _channel_to_item(channel)
 
 
 @router.post("/channels")
@@ -187,22 +195,13 @@ def create_channel(body: ChannelCreate, db: Session = Depends(get_db)):
         username=username,
         display_name=body.display_name.strip() if body.display_name else None,
         message_limit=body.message_limit,
-        only_unread=body.only_unread,
         sort_order=body.sort_order,
         message_selection_mode=body.message_selection_mode or MODE_LAST_N,
     )
     db.add(channel)
     db.commit()
     db.refresh(channel)
-    return {
-        "id": channel.id,
-        "username": channel.username,
-        "display_name": channel.display_name,
-        "message_limit": channel.message_limit,
-        "only_unread": channel.only_unread,
-        "sort_order": channel.sort_order,
-        "message_selection_mode": channel.message_selection_mode,
-    }
+    return _channel_to_item(channel)
 
 
 @router.patch("/channels/{channel_id}")
@@ -229,23 +228,13 @@ def update_channel(
         channel.display_name = body.display_name.strip() or None
     if body.message_limit is not None:
         channel.message_limit = body.message_limit
-    if body.only_unread is not None:
-        channel.only_unread = body.only_unread
     if body.sort_order is not None:
         channel.sort_order = body.sort_order
     if body.message_selection_mode is not None:
         channel.message_selection_mode = body.message_selection_mode
     db.commit()
     db.refresh(channel)
-    return {
-        "id": channel.id,
-        "username": channel.username,
-        "display_name": channel.display_name,
-        "message_limit": channel.message_limit,
-        "only_unread": channel.only_unread,
-        "sort_order": channel.sort_order,
-        "message_selection_mode": channel.message_selection_mode,
-    }
+    return _channel_to_item(channel)
 
 
 @router.delete("/channels/{channel_id}")
@@ -318,7 +307,7 @@ def create_generate(
                 detail="No channels in DB. Add channels first or pass channel_id.",
             )
         title = "Daily Digest"
-        channel_name = "TeleDigest"
+        channel_name = "Various channels"
 
     track = Track(
         title=title,

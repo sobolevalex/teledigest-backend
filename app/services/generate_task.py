@@ -77,7 +77,6 @@ async def run_generation_for_track(
             ChannelConfig(
                 username=c.username,
                 message_limit=c.message_limit,
-                only_unread=c.only_unread,
                 message_selection_mode=getattr(c, "message_selection_mode", None) or MODE_LAST_N,
                 last_digest_message_id=getattr(c, "last_digest_message_id", None),
                 last_digest_message_at=getattr(c, "last_digest_message_at", None),
@@ -86,18 +85,28 @@ async def run_generation_for_track(
         ]
         if not channel_configs:
             logger.warning("No channels to fetch for track %s", track_id)
-            track.status = "new"
+            track.status = "no_content"
             track.file_url = None
             db.commit()
             return
 
-        # Optionally set track display for single-channel run
+        # Initial display: single channel uses DB display name; multi-channel uses placeholder.
         if len(channels) == 1:
             track.channel_id = channels[0].id
             track.channel_name = channels[0].display_name or channels[0].username
         else:
-            track.channel_name = "TeleDigest"
+            track.channel_name = "Various channels"
 
+        # Log channel config so we can see why fetch might return no messages
+        for cfg in channel_configs:
+            logger.info(
+                "Track %s channel config: username=%s mode=%s last_digest_message_id=%s last_digest_message_at=%s",
+                track_id,
+                cfg.username,
+                getattr(cfg, "message_selection_mode", None),
+                getattr(cfg, "last_digest_message_id", None),
+                getattr(cfg, "last_digest_message_at", None),
+            )
         async with TelegramClient(
             SESSION_NAME,
             int(env.api_id),
@@ -107,10 +116,13 @@ async def run_generation_for_track(
             result = await fetcher.fetch()
 
         if result is None:
-            track.status = "new"
+            track.status = "no_content"
             track.file_url = None
             db.commit()
-            logger.info("No new messages for track %s; marked as new (no file)", track_id)
+            logger.warning(
+                "Track %s: fetcher returned None (no messages from any channel); status set to no_content, no MP3",
+                track_id,
+            )
             return
 
         creator = RadioEpisodeCreator(gemini_api_key=env.gemini_key)
@@ -139,7 +151,15 @@ async def run_generation_for_track(
                 return None
             return dt.astimezone(timezone.utc).replace(tzinfo=None) if getattr(dt, "tzinfo", None) else dt
 
-        track.status = "new"
+        # Title = MP3 filename for display; channel_name = real name(s) or "Various channels".
+        track.title = final_name
+        if result.channel_names:
+            track.channel_name = (
+                result.channel_names[0]
+                if len(result.channel_names) == 1
+                else "Various channels"
+            )
+        track.status = "done"
         track.file_url = f"/media/{final_name}"
         track.messages_start_at = _utc(result.first_message_at)
         track.messages_end_at = _utc(result.last_message_at)

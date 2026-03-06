@@ -58,7 +58,6 @@ async def run(config_path: str | Path = "config.json") -> None:
         ChannelConfig(
             username=c,
             message_limit=config.message_limit_per_channel,
-            only_unread=config.only_unread,
         )
         for c in config.channels
     ]

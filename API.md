@@ -32,16 +32,16 @@ Each element of `items` is a track object:
 | Field | Type | Description |
 |-------|------|-------------|
 | `id` | integer | Track ID. |
-| `title` | string | Track title (e.g. channel name or "Daily Digest"). |
-| `channel_name` | string | Display name for the channel or "TeleDigest" for full digest. |
+| `title` | string | Track title; when ready, the MP3 filename (e.g. `digest_2026-03-05_21-32_2.mp3`). |
+| `channel_name` | string | Channel display name (from Telegram), or "Various channels" if digest uses more than one channel. |
 | `channel_id` | integer \| null | Channel ID if track is for a single channel; `null` for full digest. |
-| `status` | string | `"progress"` or `"done"` (or other status). |
+| `status` | string | `"progress"` while generating; `"done"` when the MP3 is ready; `"no_content"` when generation ran but there were no new messages to digest (no MP3). |
 | `file_url` | string \| null | URL path to the generated audio file (e.g. `/media/digest_xxx.mp3`). |
 | `created_at` | string \| null | ISO 8601 datetime when the track was created. |
 | `messages_start_at` | string \| null | ISO 8601 datetime of the oldest message in the digest. |
 | `messages_end_at` | string \| null | ISO 8601 datetime of the newest message in the digest. |
 | `digest_created_at` | string \| null | ISO 8601 datetime when the digest was generated. |
-| `channels_used` | array \| null | List of channel identifiers used for this digest. |
+| `channels_used` | array \| null | List of channel display names used for this digest. |
 | `transcript_url` | string \| null | URL path to the transcript text file (e.g. `/media/digest_xxx.txt`). |
 
 **Examples:**
@@ -67,7 +67,23 @@ Returns all channels from the database, ordered by `sort_order` then `id`.
 
 **Parameters:** None.
 
-**Response:** JSON array of channel objects:
+**Response:** JSON array of channel objects (same shape as a single channel below).
+
+---
+
+### GET /api/channels/{channel_id}
+
+Returns a single channel's settings by ID.
+
+**Path parameters:**
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `channel_id` | integer | ID of the channel. |
+
+**Response:** One channel object. **404** if not found.
+
+**Channel object fields:**
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -75,14 +91,17 @@ Returns all channels from the database, ordered by `sort_order` then `id`.
 | `username` | string | Telegram channel username (without `@`). |
 | `display_name` | string \| null | Optional display name for the channel. |
 | `message_limit` | integer \| null | Max number of messages to fetch for this channel. |
-| `only_unread` | boolean | If true, only unread messages are considered (when supported). |
 | `sort_order` | integer | Order for listing (lower = earlier). |
 | `message_selection_mode` | string | `"last_n"` (default) or `"since_last_digest"`. |
 
-**Example:**
+**Examples:**
 
 ```bash
+# List all channels
 curl -X GET "http://localhost:8000/api/channels"
+
+# Get a specific channel by ID (e.g. 2)
+curl -X GET "http://localhost:8000/api/channels/2"
 ```
 
 ---
@@ -98,7 +117,6 @@ Adds a new channel by Telegram username.
 | `username` | string | Yes | Telegram channel username (e.g. `"durov"`). Leading/trailing spaces are stripped. |
 | `display_name` | string \| null | No | Optional display name. Default: `null`. |
 | `message_limit` | integer \| null | No | Max messages to fetch. Default: `null` (use app default). |
-| `only_unread` | boolean | No | Only unread messages. Default: `false`. |
 | `sort_order` | integer | No | Sort order. Default: `0`. |
 | `message_selection_mode` | string \| null | No | `"last_n"` or `"since_last_digest"`. Default: `"last_n"`. |
 
@@ -117,7 +135,6 @@ curl -X POST "http://localhost:8000/api/channels" \
     "username": "durov",
     "display_name": "Durov Channel",
     "message_limit": 50,
-    "only_unread": false,
     "sort_order": 0,
     "message_selection_mode": "last_n"
   }'
@@ -150,7 +167,6 @@ Updates an existing channel by ID. Only provided fields are updated.
 | `username` | string \| null | New Telegram username. Must be unique if provided. |
 | `display_name` | string \| null | New display name. |
 | `message_limit` | integer \| null | New message limit. |
-| `only_unread` | boolean \| null | New only_unread flag. |
 | `sort_order` | integer \| null | New sort order. |
 | `message_selection_mode` | string \| null | New mode: `"last_n"` or `"since_last_digest"`. |
 
@@ -227,7 +243,7 @@ curl -X GET "http://localhost:8000/api/telegram/channels"
 
 ### POST /api/generate
 
-Creates a new track with status `"progress"`, enqueues background generation (fetch messages, LLM digest, TTS), and returns the track ID immediately. The client can poll GET /api/tracks or the track resource to check status and `file_url` when done.
+Creates a new track with status `"progress"`, enqueues background generation (fetch messages, LLM digest, TTS), and returns the track ID immediately. When generation finishes, the track's status becomes `"done"` and `file_url` is set. The client can poll GET /api/tracks or the track resource to check status and `file_url`.
 
 **Parameters:** Optional request body (JSON).
 

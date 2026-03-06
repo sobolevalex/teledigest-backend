@@ -13,7 +13,7 @@ if TYPE_CHECKING:
 
 
 class Track(Base):
-    """A single digest track (e.g. Daily Digest); status progresses to 'new' when MP3 is ready."""
+    """A single digest track; status is 'progress' while generating, 'done' when MP3 is ready."""
 
     __tablename__ = "tracks"
 
