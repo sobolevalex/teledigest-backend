@@ -28,3 +28,6 @@
 - Write clean, strongly typed code (TypeScript for frontend, Python Type Hints for backend).
 - Omit boilerplate if it's not relevant. Show exactly where the new lines go.
 - Double-check import paths. Do not output empty placeholders unless the context is clear.
+
+## 6. Documentation update
+ - Whenever a new API is added or an existing API is modified, the API.md file must be updated accordingly.
