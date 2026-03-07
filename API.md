@@ -93,6 +93,7 @@ Returns a single channel's settings by ID.
 | `message_limit` | integer \| null | Max number of messages to fetch for this channel. |
 | `sort_order` | integer | Order for listing (lower = earlier). |
 | `message_selection_mode` | string | `"last_n"` (default) or `"since_last_digest"`. |
+| `last_digest_message_at` | string \| null | ISO 8601 UTC datetime of the last message included in a digest for this channel; `null` if never digested. |
 
 **Examples:**
 

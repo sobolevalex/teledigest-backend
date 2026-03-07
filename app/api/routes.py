@@ -151,6 +151,7 @@ def list_tracks(
 
 def _channel_to_item(c) -> dict:
     """Build channel dict for API response."""
+    last_at = getattr(c, "last_digest_message_at", None)
     return {
         "id": c.id,
         "username": c.username,
@@ -158,6 +159,7 @@ def _channel_to_item(c) -> dict:
         "message_limit": c.message_limit,
         "sort_order": c.sort_order,
         "message_selection_mode": getattr(c, "message_selection_mode", None) or MODE_LAST_N,
+        "last_digest_message_at": last_at.isoformat() if last_at else None,
     }
 
 
