@@ -6,7 +6,7 @@ import json
 from datetime import datetime
 
 from dotenv import load_dotenv
-from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException, Query
+from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session
@@ -54,7 +54,7 @@ def _run_generation_sync(
     config_path: str = "config.json",
     channel_id: int | None = None,
 ) -> None:
-    """Sync wrapper for FastAPI BackgroundTasks: run async generation in a new event loop."""
+    """Sync wrapper: run async generation in a new event loop (used only if create_generate runs sync)."""
     asyncio.run(run_generation_for_track(track_id, config_path, channel_id))
 
 
@@ -282,14 +282,15 @@ async def list_telegram_channels_api():
 
 
 @router.post("/generate")
-def create_generate(
-    background_tasks: BackgroundTasks,
+async def create_generate(
     db: Session = Depends(get_db),
     body: GenerateBody | None = Body(None),
 ):
     """
     Create a new Track (status='progress'), enqueue background generation,
     and return the track_id immediately.
+    Generation runs on the main event loop (asyncio.create_task) to avoid
+    gRPC/GenAI BlockingIOError when using a separate loop in a thread.
     Optional body: { "channel_id": 2 } to run conversion only for that channel.
     If no channels in DB and no channel_id, returns 400.
     """
@@ -323,7 +324,5 @@ def create_generate(
     db.refresh(track)
     track_id = track.id
 
-    background_tasks.add_task(
-        _run_generation_sync, track_id, "config.json", channel_id
-    )
+    asyncio.create_task(run_generation_for_track(track_id, "config.json", channel_id))
     return {"track_id": track_id}
