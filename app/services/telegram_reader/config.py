@@ -81,7 +81,7 @@ class ChannelConfig:
 class AppConfig:
     """Configuration loaded from config.json (non-channel options)."""
 
-    channels: list[str]  # Legacy: ignored when channels are loaded from DB
+    channels: list[str]  # Fallback only: used by standalone main.py when DB has no channels; app/API use DB only
     message_limit_per_channel: int  # Default for new channels / fallback
     email_subject_prefix: str
     show_unread_count: bool

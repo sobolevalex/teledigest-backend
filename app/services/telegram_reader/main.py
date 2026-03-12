@@ -9,9 +9,12 @@ from pathlib import Path
 from dotenv import load_dotenv
 from telethon import TelegramClient
 
+from app.core.database import SessionLocal
+from app.models import Channel
 from app.services.telegram_reader.config import (
     ChannelConfig,
     EnvVars,
+    MODE_LAST_N,
     load_config,
     load_env,
 )
@@ -53,14 +56,46 @@ async def run(config_path: str | Path = "config.json") -> None:
     config = load_config(config_path)
     _check_env_for_run(env, config.output_mode)
 
-    session_name = "anon"
-    channel_configs = [
-        ChannelConfig(
-            username=c,
-            message_limit=config.message_limit_per_channel,
+    # Channel list: DB only for app/API; here use DB first, fallback to config when DB is empty
+    channel_configs: list[ChannelConfig] = []
+    db = SessionLocal()
+    try:
+        channels = (
+            db.query(Channel)
+            .order_by(Channel.sort_order, Channel.id)
+            .all()
         )
-        for c in config.channels
-    ]
+        if channels:
+            channel_configs = [
+                ChannelConfig(
+                    username=c.username,
+                    message_limit=c.message_limit or config.message_limit_per_channel,
+                    message_selection_mode=getattr(c, "message_selection_mode", None) or MODE_LAST_N,
+                    last_digest_message_id=getattr(c, "last_digest_message_id", None),
+                    last_digest_message_at=getattr(c, "last_digest_message_at", None),
+                )
+                for c in channels
+            ]
+    finally:
+        db.close()
+
+    if not channel_configs and getattr(config, "channels", None):
+        # Fallback: config.channels when DB has no channels (standalone CLI without DB)
+        channel_configs = [
+            ChannelConfig(
+                username=c,
+                message_limit=config.message_limit_per_channel,
+            )
+            for c in config.channels
+        ]
+
+    if not channel_configs:
+        logger.error(
+            "No channels. Add channels via API (or DB) or set 'channels' in config.json for standalone run."
+        )
+        sys.exit(1)
+
+    session_name = "anon"
     async with TelegramClient(
         session_name, int(env.api_id), env.api_hash
     ) as client:

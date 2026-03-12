@@ -7,6 +7,7 @@ from datetime import datetime
 
 from dotenv import load_dotenv
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session
@@ -168,11 +169,14 @@ def _channel_to_item(c) -> dict:
 
 @router.get("/channels")
 def list_channels(db: Session = Depends(get_db)):
-    """Return all channels from DB, ordered by sort_order then id."""
+    """Return all channels from DB, ordered by sort_order then id. Never cached so UI sees newly added channels."""
     channels = (
         db.query(Channel).order_by(Channel.sort_order, Channel.id).all()
     )
-    return [_channel_to_item(c) for c in channels]
+    return JSONResponse(
+        content=[_channel_to_item(c) for c in channels],
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 @router.get("/channels/{channel_id}")
