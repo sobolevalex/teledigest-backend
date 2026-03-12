@@ -133,10 +133,32 @@ async def run_generation_for_track(
             logger.exception("Radio episode failed for track %s: %s", track_id, err)
             return
 
-        # Timestamp when digest was finished; use for filename and DB
+        # Normalize datetimes to UTC for storage (SQLite has no timezone)
+        def _utc(dt: datetime | None) -> datetime | None:
+            if dt is None:
+                return None
+            return dt.astimezone(timezone.utc).replace(tzinfo=None) if getattr(dt, "tzinfo", None) else dt
+
         digest_created_at = datetime.now(timezone.utc)
-        final_name = f"digest_{digest_created_at.strftime('%Y-%m-%d_%H-%M')}_{track_id}.mp3"
+        last_at = result.last_message_at
+        # Filename: ChannelName_YY-MM-DD_HH-MM.mp3 (e.g. NextaLive_26-03-06_13-05.mp3)
+        safe_channel = "Various"
+        if result.channel_names and len(result.channel_names) == 1:
+            # Sanitize for filesystem: alphanumeric and underscore only
+            raw = result.channel_names[0].strip() or "Unknown"
+            safe_channel = "".join(c if c.isalnum() or c in "._-" else "_" for c in raw)
+            safe_channel = "_".join(safe_channel.split()).strip("_") or "Unknown"
+        if last_at is not None:
+            end_dt = last_at.astimezone(timezone.utc) if getattr(last_at, "tzinfo", None) else last_at
+            final_name = f"{safe_channel}_{end_dt.strftime('%y-%m-%d_%H-%M')}.mp3"
+        else:
+            final_name = f"{safe_channel}_{digest_created_at.strftime('%y-%m-%d_%H-%M')}.mp3"
         final_mp3_path = media_dir / final_name
+        # Avoid overwriting existing file (e.g. same channel same minute)
+        if final_mp3_path.exists():
+            base = final_mp3_path.stem
+            final_name = f"{base}_{track_id}.mp3"
+            final_mp3_path = media_dir / final_name
         initial_mp3_path = Path(output_path)
         if initial_mp3_path.resolve() != final_mp3_path.resolve():
             initial_mp3_path.rename(final_mp3_path)
@@ -144,12 +166,6 @@ async def run_generation_for_track(
         # Transcript: raw message data only (before AI prompt was added), same basename as MP3
         transcript_path = final_mp3_path.with_suffix(".txt")
         transcript_path.write_text(result.content_data_only, encoding="utf-8")
-
-        # Normalize datetimes to UTC for storage (SQLite has no timezone)
-        def _utc(dt: datetime | None) -> datetime | None:
-            if dt is None:
-                return None
-            return dt.astimezone(timezone.utc).replace(tzinfo=None) if getattr(dt, "tzinfo", None) else dt
 
         # Title = MP3 filename for display; channel_name = real name(s) or "Various channels".
         track.title = final_name
