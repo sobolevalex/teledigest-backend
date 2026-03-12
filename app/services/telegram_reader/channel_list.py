@@ -7,6 +7,12 @@ from telethon import TelegramClient
 from telethon.tl.types import Channel
 
 
+class TelegramSessionUnauthorizedError(Exception):
+    """Raised when the Telegram session file exists but is not logged in."""
+
+    pass
+
+
 async def list_telegram_channels(
     api_id: int,
     api_hash: str,
@@ -15,9 +21,17 @@ async def list_telegram_channels(
     """
     Return all channels and megagroups the Telegram account has access to.
     Each item: {"kind": "channel" | "megagroup", "title": str, "username": str | None, "id": int}.
+    Uses connect() + is_user_authorized() to avoid triggering interactive login prompts.
     """
     result: list[dict] = []
-    async with TelegramClient(session_name, api_id, api_hash) as client:
+    client = TelegramClient(session_name, api_id, api_hash)
+    try:
+        await client.connect()
+        if not await client.is_user_authorized():
+            raise TelegramSessionUnauthorizedError(
+                "Telegram session not authorized. Create or re-auth the session (e.g. run the login script) "
+                f"so that {session_name}.session exists and is logged in."
+            )
         async for dialog in client.iter_dialogs():
             entity = dialog.entity
             if not isinstance(entity, Channel):
@@ -32,4 +46,6 @@ async def list_telegram_channels(
                     "id": entity.id,
                 }
             )
-    return sorted(result, key=lambda x: x["title"].lower())
+        return sorted(result, key=lambda x: x["title"].lower())
+    finally:
+        await client.disconnect()

@@ -222,7 +222,7 @@ Returns all channels and megagroups the configured Telegram account has access t
 
 **Parameters:** None.
 
-**Requirements:** `TG_API_ID` and `TG_API_HASH` in `.env`, and a valid `anon.session` (Telethon session).
+**Requirements:** `TG_API_ID` and `TG_API_HASH` in `.env`, and a valid `anon.session` (Telethon session). To create or re-auth the session, run from the backend project root: `PYTHONPATH=. python -m scripts.telegram_login` (or inside the Docker container: `docker exec -it teledigest python -m scripts.telegram_login`).
 
 **Response:** JSON object with key `channels` — array of channel objects (structure depends on Telethon; typically includes identifiers and titles).
 
@@ -230,7 +230,7 @@ Returns all channels and megagroups the configured Telegram account has access t
 
 - **200:** `{"channels": [...]}`.
 - **502:** Telegram error (e.g. session invalid, network error).
-- **503:** Telegram not configured (missing env vars).
+- **503:** Telegram not configured (missing env vars) or session not authorized (run the login script to create `anon.session`).
 
 **Example:**
 

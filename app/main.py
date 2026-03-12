@@ -91,9 +91,15 @@ _migrate_channels_add_selection_mode()
 
 app = FastAPI(title="TeleDigest")
 
+# Allow localhost, any LAN IP:3000, and the public app (CORS).
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=[
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "https://app.sobolevfamily.com",
+    ],
+    allow_origin_regex=r"http://(192\.168\.\d{1,3}\.\d{1,3}|10\.\d{1,3}\.\d{1,3}\.\d{1,3}):3000",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

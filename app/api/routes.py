@@ -15,7 +15,10 @@ from app.core.database import get_db
 from app.models import Channel, Track
 from app.services.generate_task import run_generation_for_track
 from app.services.telegram_reader.config import MODE_LAST_N, load_env
-from app.services.telegram_reader.channel_list import list_telegram_channels
+from app.services.telegram_reader.channel_list import (
+    list_telegram_channels,
+    TelegramSessionUnauthorizedError,
+)
 
 router = APIRouter(prefix="/api")
 
@@ -271,6 +274,11 @@ async def list_telegram_channels_api():
             int(env.api_id), env.api_hash, session_name="anon"
         )
         return {"channels": channels}
+    except TelegramSessionUnauthorizedError as err:
+        raise HTTPException(
+            status_code=503,
+            detail=str(err),
+        )
     except Exception as err:
         raise HTTPException(
             status_code=502,
