@@ -4,17 +4,20 @@ import asyncio
 import base64
 import json
 from datetime import datetime
+from typing import Literal
 
 from dotenv import load_dotenv
 from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException, Query
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.models import Channel, Track
+from app.realtime.playback_hub import playback_hub
 from app.services.generate_task import run_generation_for_track
+from app.services.track_playback import ListenPatchError, apply_listen_patch
 from app.services.telegram_reader.config import MODE_LAST_N, load_env
 from app.services.telegram_reader.channel_list import (
     list_telegram_channels,
@@ -53,6 +56,16 @@ class GenerateBody(BaseModel):
     channel_id: int | None = None
 
 
+class ListenPatchBody(BaseModel):
+    """Body for PATCH /api/tracks/{id}/listen."""
+
+    action: Literal["mark_new", "mark_played", "progress"]
+    position_seconds: float | None = Field(
+        default=None,
+        description="Required for progress: current playback time in seconds (in-track position).",
+    )
+
+
 def _run_generation_sync(
     track_id: int,
     config_path: str = "config.json",
@@ -86,6 +99,8 @@ def _track_to_item(t):
         "digest_created_at": t.digest_created_at.isoformat() if t.digest_created_at else None,
         "channels_used": channels_used,
         "transcript_url": transcript_url,
+        "play_status": getattr(t, "play_status", None) or "new",
+        "playback_position_seconds": getattr(t, "playback_position_seconds", None),
     }
 
 
@@ -148,6 +163,36 @@ def list_tracks(
         "next_cursor": next_cursor,
         "has_more": has_more,
     }
+
+
+@router.patch("/tracks/{track_id}/listen")
+async def patch_track_listen(
+    track_id: int,
+    body: ListenPatchBody,
+    db: Session = Depends(get_db),
+):
+    """
+    Update listen metadata: mark_new, mark_played, or progress (sets started + position).
+    Broadcasts to WebSocket subscribers on success.
+    """
+    try:
+        track = apply_listen_patch(
+            db,
+            track_id,
+            body.action,
+            body.position_seconds,
+        )
+    except ListenPatchError as err:
+        if err.code == "not_found":
+            raise HTTPException(status_code=404, detail=err.message) from err
+        raise HTTPException(status_code=400, detail=err.message) from err
+
+    await playback_hub.broadcast_listen(
+        track.id,
+        track.play_status,
+        track.playback_position_seconds,
+    )
+    return _track_to_item(track)
 
 
 # --- Channels CRUD ---

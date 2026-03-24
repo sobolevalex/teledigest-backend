@@ -3,7 +3,7 @@
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import DateTime, Float, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
@@ -31,6 +31,9 @@ class Track(Base):
     messages_end_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     digest_created_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     channels_used: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON array of channel names
+    # Listen metadata (SSOT for player UI); separate from generation status above.
+    play_status: Mapped[str] = mapped_column(String(16), default="new", nullable=False)
+    playback_position_seconds: Mapped[float | None] = mapped_column(Float, nullable=True)
 
     channel: Mapped["Channel | None"] = relationship(
         "Channel", back_populates="tracks", foreign_keys=[channel_id]
